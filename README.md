@@ -1,10 +1,33 @@
-IMPORTANT NOTE
-==============
+# IMPORTANT NOTE
+
 This repository is a downstream clone of https://bitbucket.org/sensibill/mongo-dynamic-indexer. Its been put to make the tool
 more visible among the git community. For the latest code, please follow that link!
 
-Introduction
-============
+# Table of Contents
+
+- [Introduction](#introduction)
+- [License](#license)
+- [Quick Start](#quick-start)
+- [Command line Arguments](#command-line-arguments)
+- [Comparison with other tools](#comparison-with-other-tools)
+- [Fine Tuning Results](#fine-tuning-results)
+- [Modes of Usage](#modes-of-usage)
+    - [Static Analysis](#static-analysis)
+    - [Dynamic Service - Mongo Slow Query Profiling Mode](#dynamic-service---mongo-slow-query-profiling-mode)
+    - [Dynamic Service - Mongo full profiling mode with only recent query profiles](#dynamic-service---mongo-full-profiling-mode-with-only-recent-query-profiles)
+    - [As a library (under construction)](#as-a-library-under-construction)
+- [Query Metadata](#query-metadata)
+- [How does it pick indexes?](#how-does-it-pick-indexes)
+    - [Step 1: Collect and break down the queries](#step-1-collect-and-break-down-the-queries)
+    - [Step 2: Randomly sample the collection to statistics for each field](#step-2-randomly-sample-the-collection-to-statistics-for-each-field)
+    - [Step 3: Compute the optimal index for each query profile](#step-3-compute-the-optimal-index-for-each-query-profile)
+    - [Step 4: Eliminate indexes which are prefixes of other indexes](#step-4-eliminate-indexes-which-are-prefixes-of-other-indexes)
+    - [Step 5: Randomly sample the collection for index statistics and eliminate unnecessary fields](#step-5-randomly-sample-the-collection-for-index-statistics-and-eliminate-unnecessary-fields)
+    - [Step 6: Index Extension](#step-6-index-extension)
+- [Troubleshooting](#troubleshooting)
+- [TODO](#todo)
+
+# Introduction
 
 The Mongo Dynamic Indexer is a tool for automatically picking and maintaining indexes 
 based on the real queries being made to the database.
@@ -20,21 +43,20 @@ Mongo Dynamic Indexer to do a whole host of optimizations that other tools don't
 and the resulting indexes are just fantastic. They are minimalistic but still totally
 cover your queries.
 
-License
-=======
+# License
 
 Mongo Dynamic Indexer is licensed under MIT license. Please see the license file within
 the distribution.
 
-Quick Start
-==========
-### Install through NPM
+# Quick Start
+
+## Install through NPM
 
 Installation is quick and easy through npm.
 
     $ npm install mongo-dynamic-indexer -g
 
-### Start the dynamic indexer
+## Start the dynamic indexer
 
 Start the indexer pointing to your database. Note that, by default, it will enable profiling
 on your database, so you must have that permission on the user you log in with.
@@ -50,15 +72,14 @@ You could also just enable profiling manually, and use -p -1 so that the dynamic
     { "was" : 0, "slowms" : 100, "ok" : 1 }
     >
 
-### Use your system as you normally would
+## Use your system as you normally would
 
 Now you just use your system as you normally would! As queries come in, the Mongo Dynamic
 Indexer will record them. Every 60 seconds (change with -i), it will print out its recommended
 indexes and will make the changes (-c enables making the changes live).
 
 
-Command line Arguments
-======================
+# Command line Arguments
 
     $ mongodynamicindexer --help
 
@@ -87,19 +108,18 @@ Command line Arguments
     --simple                                                     Enable simple output mode. Instead of outputting a complete description of the index plan, it will instead just output the indexes raw. Easier for copying and pasting into your own code.
 
 
-Comparison with other tools
-===========================
+# Comparison with other tools
 
 Mongo Dynamic Indexer is far from the first tool to automatically recommend indexes for Mongo. However, it is the very first to do a whole host
 of optimizations that other tools don't do. See the comparison of the optimizations performed, and you will know that Mongo Dynamic Indexer
 will produce excellent indexes for you!
 
-### Dex
+## Dex
 
 - Breaks apart queries into exact match, sort, and range portions
 - Automatically handles $or, $and, and $elemMatch conditions
 
-### Mongo Dynamic Indexer
+## Mongo Dynamic Indexer
 
 - Breaks apart queries into exact match, sort, and range portions
 - Automatically handles $or, $and, and $elemMatch conditions
@@ -116,32 +136,30 @@ will produce excellent indexes for you!
 
 As you can see, Mongo Dynamic Indexer, while slower and requiring random sampling of your data, can produce way, way better results!
 
-Fine Tuning Results
-===================
+# Fine Tuning Results
 
-The main way to fine tune results is through the `--minimum-cardinality` and `--minimum-reduction` options. 
+The main way to fine tune results is through the `--minimum-cardinality` and `--minimum-reduction` options.
 
-### If you want fewer resulting indexes, and more sharing of indexes between queries
+## If you want fewer resulting indexes, and more sharing of indexes between queries
 
 - Increase `--minimum-cardinality` so that low cardinality fields, like "status" or other enumerations, are eliminated from the base of the indexes. The default of `--minimum-cardinality 3` only eliminates boolean fields, since boolean fields have only 2 possible values. Raising it to `--minimum-cardinality 10` would eliminate more small enumerations and other fields with only a handful of values. Remember these fields are not deleted entirely from the indexes - they can be added back on in Step 6 of the optimization algorithm. Its simply that the system won't consider these fields when trying to see which queries can share indexes in Steps 4 and 5.
 - Decrease `--minimum-reduction` to eliminate fields that don't add much specificity to the index (often because they are highly correlated with other fields in the index). The default value of `--minimum-reduction 0.7` will only eliminate fields that, on average, narrow down the results less then 30%. Some blogs (such as https://emptysqua.re/blog/optimizing-mongodb-compound-indexes/#equality-range-sort ) suggest a rule of thumb of eliminating all fields that don't narrow results at least 90%. This would imply a value of `--minimum-reduction 0.1`. Remember that if you decrease this value, it would require more rounds of random sampling your data in order to determine the statistics. Be sure to adjust `--sample-speed` as needed.
 
-### If you want fewer indexes, eliminating indexes for queries that don't happen very often
+## If you want fewer indexes, eliminating indexes for queries that don't happen very often
 
 - Increase `--minimum-query-count` so that rare queries are filtered out and don't result in indexes
 
-### If you want more indexes that are more specific to their queries
+## If you want more indexes that are more specific to their queries
 
 - Decrease `--minimum-cardinality`  to `--minimum-cardinality 1` will eliminate this optimization, including all fields in the base indexes generated by Step 3 of the algorithm.
 - Increase `--minimimum-reduction` up to a higher value then `--minimum-cardinality 0.7`, such as `--minimum-cardinality 0.85` or `--minimum-cardinality 1.00` to allow more fields to stay in the indexes, even if they don't add much specificity to the index.
 
-### If you want simpler indexes, that only have the minimum necessary fields
+## If you want simpler indexes, that only have the minimum necessary fields
 
 - Use `--no-index-extension` to disable Step 6 of the optimization algorithm, which adds back fields to the resulting indexes that it eliminated in Steps 4 and 5
 
 
-Modes of Usage
-==============
+# Modes of Usage
 
 There are a bunch of different ways of installing and using the Mongo Dynamic Indexer,
 with varying complexity and performance implications. 
@@ -150,8 +168,7 @@ Many of the cons of each of these modes could be alleviated by further developme
 free to contribute!
 
 
-Static Analysis
----------------
+## Static Analysis
 
 Static analysis mode is the simplest possible way to deploy the dynamic indexer.
 
@@ -214,8 +231,7 @@ Similar caveats to the other profiling based modes.
   most optimal indexes. Particularly when it comes to field cardinality!
 
 
-Dynamic Service - Mongo Slow Query Profiling Mode
--------------------------------------------------
+## Dynamic Service - Mongo Slow Query Profiling Mode
 
 Slow Query Mode is the possible way of deploying the dynamic indexer as a service. Slow Query
 Mode is easy to deploy and has low performance implications. Essentially, what we do is 
@@ -282,8 +298,7 @@ using something such as upstart or system-v.
 - Unable to example queries to ensure that the expected index is being used
 
 
-Dynamic Service - Mongo full profiling mode with only recent query profiles
----------------------------------------------------------------------------
+## Dynamic Service - Mongo full profiling mode with only recent query profiles
 
 This mode is similar to slow-query mode, except that you enable full profiling for all
 queries. This has more of a performance implication, but has the benefit that you are
@@ -375,8 +390,7 @@ that query is being made anymore!
 Once the index is gone, the query will become slow again. The dynamic indexer will see it
 once again, and then that exact same index will get recreated.
 
-As a library (under construction)
----------------------------------
+## As a library (under construction)
 
 In this mode, you use the dynamic indexer as a library, and manually forward it the queries
 that are being made on the system.
@@ -402,8 +416,7 @@ very soon.
   forward the queries being made.
 - Requires you to write an application in NodeJS
 
-Query Metadata
-==============
+# Query Metadata
 
 The Dynamic Indexer is able to use metadata that attached to your queries through the use of $comment: https://docs.mongodb.com/manual/reference/operator/meta/comment/
 
@@ -492,14 +505,13 @@ As an example, take a look at the following code for the Mongoose ORM for MongoD
 
 
 
-How does it pick indexes?
-=========================
+# How does it pick indexes?
 
 Great question! There are a bunch of steps involved in order for the dynamic indexer to
 produce its recommended indexes. 
 
 
-### Step 1: Collect and break down the queries
+## Step 1: Collect and break down the queries
 First, the dynamic indexer starts tailing the system.profile collection, watching queries
 live as they happen.
 
@@ -554,7 +566,7 @@ it will recommend an index for every single query it sees, even if it only sees 
 
 Only queries that meet the minimum will proceed to the next stage.
 
-### Step 2: Randomly sample the collection to statistics for each field
+## Step 2: Randomly sample the collection to statistics for each field
 
 At this point, the system goes through the collection and grabs 1,000 random objects in
 order to determine cardinality and other information about each field.
@@ -567,7 +579,7 @@ statistics, you can go into the object and delete the "sampler" field and all it
 
 Then restart the dynamic indexer and it will resample the database for statistical information.
 
-### Step 3: Compute the optimal index for each query profile
+## Step 3: Compute the optimal index for each query profile
 
 Now, we need to compute the optimal index for each query profile. The system follows a few
 rules of thumb are as follows:
@@ -678,7 +690,7 @@ queries so complex where there is no possible way it could be done quickly, you 
 expect that it is not executed quickly, even when its backed by several well chosen 
 indexes. I can not repeat this enough.
 
-### Step 4: Eliminate indexes which are prefixes of other indexes
+## Step 4: Eliminate indexes which are prefixes of other indexes
 
 Now the single most important step in terms of minimizing the total number of indexes,
 since each index adds to the cost of your operation. Indexes which are an exact prefix
@@ -719,7 +731,7 @@ to create! We now only need:
 
 In order to cover all 6 different query profiles!
 
-### Step 5: Randomly sample the collection for index statistics and eliminate unnecessary fields
+## Step 5: Randomly sample the collection for index statistics and eliminate unnecessary fields
 
 Here is one of the most important steps in the process. In this stage, we take all of the "optimal"
 indexes recommended by the last reduction in Step 4, and then uses a random sample of data in order 
@@ -777,7 +789,7 @@ together. If thats the case, try increasing `--minimum-reduction` above 0.7, to 
 that it allows more fields through even if they don't reduce that much.
 
 
-### Step 6 - Index Extension
+## Step 6: Index Extension
 
 Steps 4 and 5 will, in combination, do a great job at finding which queries can share indexes. Their
 primary purpose is to ensure that we don't end up generating hundreds of different indexes just because
@@ -818,24 +830,23 @@ without the extensions. The minimalistic indexes should give you great performan
 meant to add an extra 10% for certain edge cases.
 
 
-Troubleshooting
-===============
+# Troubleshooting
 
-### Error: MongoError: No more documents in tailed cursor
+## Error: MongoError: No more documents in tailed cursor
 
 Please ensure that you have database profiling enabled, and that you have made at least one
 query. Otherwise, the profiling collection will be empty, resulting in this error.
 
 You must restart the program after receiving this error.
 
-### I am getting no output
+## I am getting no output
 
 Please ensure that database profiling is enabled.
 
 This can also happen if you run the program with --show-changes-only, and you already
 happen to have all of the indexes you need.
 
-### What are all these indexes with 0 query profiles?
+## What are all these indexes with 0 query profiles?
 
 These are the indexes that the program found that it is not managing. It will *not*
 delete your existing indexes for you. Any and all indexes that are created outside
@@ -850,14 +861,14 @@ begins with "auto_", such as when you are indexing a field "auto". The prefix
 "auto_" is how the dynamic indexer knows a particular index is one that its managing,
 so it could get confused in this one case.
 
-### How do I reset the internal state of the dynamic indexer?
+## How do I reset the internal state of the dynamic indexer?
 
 Delete the data in the `index-optimizer` collection which is used by the dynamic indexer
 to hold its internal state. Alternatively, you can just delete the `querySet` or
 the `sampler` fields on the object it creates in that collection, if you just want to
 reset the known queries or sampling data without resetting the other.
 
-### Can I copy the internal state of the dynamic indexer between databases?
+## Can I copy the internal state of the dynamic indexer between databases?
 
 Yes as long as the database name is the same.
 
@@ -866,21 +877,20 @@ in the dynamic indexer code which uses `namespace` to just use `collectionName` 
 to allow this. Feel free to contribute!
 
 
-TODO
-====
+# TODO
 
-### Bugs
+## Bugs
 - I believe there is a bug in the detection of fields that are too long to index, as some Buffer fields (cppBuffer on Annotation) are being left in the results
 - There seems to be a bug with the detection of the existing indexes, as allhe indexes are being put under create regardless of the plan
 
-### General
+## General
 - Put an eslint file into the repository.
 - Rename everything about 'range' matches to 'multivalue' matches
 
-### Documentation to write
+## Documentation to write
 - Dependencies re: packages, mongo versions
 
-### General Features
+## General Features
 - The sampling for index statistics could be significantly improved:
     - When sampling, if its computing cardinalities for the same prefix (but for different indexes), then it should share the computation in memory
     - When its done sampling, it should store statistics for every index prefix of the indexes it was computing - This saves time because the most common field to be removed during reduction is the last field on the index
@@ -888,12 +898,12 @@ TODO
 - Need a way to trigger index synchronization only at 4am
 - Logging using syslog
 
-### Library
+## Library
 - Refactor the various classes in the application so that it can be used in a flexible manner as a library. The application should just use the library and weave it into a whole.
 - A way for it to $hint to mongo which index it should use (at least for comparison with mongos internally chosen index)
 - Should be able to automatically wrap mongoose and native mongodb objects (or maybe only native mongodb) and provide things like line numbers in $comment metadata automatically
 
-### Optimization improvements
+## Optimization improvements
 - There is a bug in the index simplification algorithm. When computing the index statistics, to see which fields to eliminate, it should not be considering the sort field in the reduction statistics, because the sort field is not used actually used to narrow down the results
 - In the index extension algorithm, if there is more then one field that it could add which have exactly the same summed usageCount, then it should consider the cardinality of the fields next - lowest cardinality first (same as regular exact match).
 - Would be nice if you could provide a configuration file for optimization, as using the command line gets a bit tedious when many optimizations are involved
@@ -920,4 +930,5 @@ TODO
         {a: 1, b: 1}
 
     There are a bunch of potential scenarios like this with both the exact and range matches to reduce the number of resulting indexes.
+
 
